@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UPS Hub</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#080c12; --surface:#0c1118; --panel:#0f1520; --border:#1a2540;
+  --accent:#00e5ff; --accent2:#39ff14; --accent3:#ff6b35;
+  --warn:#ffcc00; --danger:#ff3333; --text:#c8d8f0; --muted:#4a6080;
+  --mono:'Share Tech Mono',monospace; --sans:'Barlow',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,229,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,0.025) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0}
+
+/* ── Layout ── */
+.app{position:relative;z-index:1;display:flex;flex-direction:column;min-height:100vh}
+
+/* ── Top bar ── */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.5rem;border-bottom:1px solid var(--border);background:rgba(8,12,18,0.8);backdrop-filter:blur(8px);position:sticky;top:0;z-index:50}
+.topbar-left{display:flex;align-items:center;gap:1rem}
+.hub-icon{width:36px;height:36px;background:linear-gradient(135deg,#0a1a30,#0d2040);border:1px solid var(--accent);border-radius:7px;display:flex;align-items:center;justify-content:center;animation:pulse-border 3s ease-in-out infinite}
+@keyframes pulse-border{0%,100%{box-shadow:0 0 12px rgba(0,229,255,0.15)}50%{box-shadow:0 0 24px rgba(0,229,255,0.3)}}
+.hub-icon svg{width:20px;height:20px}
+.hub-title{font-family:var(--mono);font-size:1rem;color:var(--accent);letter-spacing:0.12em;text-transform:uppercase}
+.hub-sub{font-family:var(--mono);font-size:0.6rem;color:var(--muted);letter-spacing:0.08em}
+.topbar-right{display:flex;align-items:center;gap:1rem}
+.time-tabs{display:flex;gap:0.25rem}
+.time-tab{background:none;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:0.6rem;padding:0.2rem 0.5rem;border-radius:3px;cursor:pointer;transition:all 0.15s}
+.time-tab:hover{border-color:var(--accent);color:var(--accent)}
+.time-tab.active{border-color:var(--accent);color:var(--accent);background:rgba(0,229,255,0.08)}
+#globalTime{font-family:var(--mono);font-size:0.62rem;color:var(--muted)}
+
+/* ── Main grid ── */
+.main{padding:1.5rem;display:flex;flex-direction:column;gap:1.5rem;flex:1}
+
+/* ── Overview strip ── */
+.overview-strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem}
+.ups-card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:1.2rem 1.4rem;position:relative;overflow:hidden;transition:border-color 0.2s,box-shadow 0.2s;cursor:pointer}
+.ups-card:hover{border-color:rgba(0,229,255,0.3);box-shadow:0 0 20px rgba(0,229,255,0.05)}
+.ups-card.selected{border-color:var(--accent);box-shadow:0 0 24px rgba(0,229,255,0.1)}
+.ups-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:0}
+.ups-card.selected::before{opacity:0.6}
+.ups-card.offline{border-color:rgba(255,51,51,0.3)}
+.ups-card.offline::before{background:linear-gradient(90deg,transparent,var(--danger),transparent);opacity:0.4}
+
+.card-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1rem}
+.card-name{font-family:var(--mono);font-size:0.78rem;color:var(--text);letter-spacing:0.05em}
+.card-loc{font-family:var(--mono);font-size:0.58rem;color:var(--muted);margin-top:0.15rem}
+.status-pill{display:flex;align-items:center;gap:0.35rem;padding:0.2rem 0.6rem;border-radius:100px;border:1px solid;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.08em;white-space:nowrap}
+.status-pill.online {border-color:var(--accent2);color:var(--accent2);background:rgba(57,255,20,0.07)}
+.status-pill.onbatt {border-color:var(--warn);   color:var(--warn);   background:rgba(255,204,0,0.07)}
+.status-pill.danger {border-color:var(--danger);  color:var(--danger);  background:rgba(255,51,51,0.07)}
+.status-pill.offline{border-color:var(--muted);   color:var(--muted);   background:transparent}
+.pill-dot{width:5px;height:5px;border-radius:50%;background:currentColor;animation:blink 1.5s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
+
+/* Card metrics row */
+.card-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;margin-bottom:1rem}
+.metric{text-align:center}
+.metric-val{font-family:var(--mono);font-size:1.1rem;color:var(--text);line-height:1}
+.metric-val.green{color:var(--accent2)}.metric-val.yellow{color:var(--warn)}.metric-val.red{color:var(--danger)}
+.metric-unit{font-family:var(--mono);font-size:0.55rem;color:var(--muted)}
+.metric-label{font-family:var(--mono);font-size:0.52rem;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;margin-top:0.15rem}
+
+/* Mini sparkline inside card */
+.card-spark{height:36px;width:100%}
+canvas.spark-canvas{display:block;width:100%;height:100%}
+
+/* ── Detail section ── */
+.detail-section{display:none}
+.detail-section.visible{display:block}
+.detail-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem}
+.detail-title{font-family:var(--mono);font-size:0.7rem;color:var(--accent);letter-spacing:0.15em;text-transform:uppercase}
+.detail-close{background:none;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:0.6rem;padding:0.2rem 0.6rem;border-radius:3px;cursor:pointer;transition:all 0.15s}
+.detail-close:hover{border-color:var(--danger);color:var(--danger)}
+
+.charts-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1rem}
+@media(max-width:800px){.charts-grid{grid-template-columns:1fr}}
+
+.chart-panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:1rem 1.2rem 0.8rem;position:relative;overflow:hidden}
+.chart-panel::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:0.25}
+.chart-header{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:0.4rem}
+.chart-title{font-family:var(--mono);font-size:0.58rem;color:var(--muted);letter-spacing:0.15em;text-transform:uppercase}
+.chart-meta{display:flex;align-items:baseline;gap:0.5rem}
+.chart-current{font-family:var(--mono);font-size:1rem;color:var(--accent)}
+.chart-unit{font-size:0.62rem;color:var(--muted)}
+.chart-minmax{font-family:var(--mono);font-size:0.54rem;color:var(--muted)}
+.chart-canvas-wrap{position:relative;height:80px;cursor:crosshair}
+canvas.chart-canvas{display:block;width:100%;height:100%}
+.chart-axis{display:flex;justify-content:space-between;margin-top:0.25rem;font-family:var(--mono);font-size:0.5rem;color:var(--muted)}
+
+/* ── All-time stats ── */
+.stats-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:0.6rem;margin-top:1rem}
+.stat-cell{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem}
+.stat-cell-key{font-family:var(--mono);font-size:0.55rem;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase}
+.stat-cell-val{font-family:var(--mono);font-size:0.85rem;color:var(--text);margin-top:0.2rem}
+.stat-cell-val span{color:var(--muted);font-size:0.65rem}
+
+/* ── Events ── */
+.events-panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:1rem 1.2rem}
+.events-panel::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent3),transparent);opacity:0.3}
+.events-list{margin-top:0.6rem;display:flex;flex-direction:column;gap:0.3rem;max-height:120px;overflow-y:auto}
+.event-row{display:flex;gap:0.8rem;align-items:center;font-family:var(--mono);font-size:0.65rem}
+.event-time{color:var(--muted);white-space:nowrap;min-width:60px}
+.event-agent{color:var(--accent);min-width:80px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.event-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+.event-dot.green{background:var(--accent2)}.event-dot.yellow{background:var(--warn)}.event-dot.red{background:var(--danger)}.event-dot.blue{background:var(--accent)}
+.event-msg{color:var(--text)}
+.events-list::-webkit-scrollbar{width:3px}.events-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+/* ── Raw NUT data ── */
+.raw-toggle{background:none;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:0.62rem;letter-spacing:0.08em;padding:0.3rem 0.7rem;border-radius:3px;cursor:pointer;transition:all 0.15s;margin-top:0.8rem}
+.raw-toggle:hover{border-color:var(--accent);color:var(--accent)}
+.raw-table{display:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;font-family:var(--mono);font-size:0.68rem;margin-top:0.5rem}
+.raw-table.visible{display:block}
+.raw-row{display:grid;grid-template-columns:1fr 1fr;padding:0.4rem 1rem;border-bottom:1px solid var(--border)}
+.raw-row:last-child{border-bottom:none}.raw-row:hover{background:rgba(0,229,255,0.02)}
+.raw-key{color:var(--muted)}.raw-val{color:var(--accent);text-align:right}
+
+/* ── Footer ── */
+footer{padding:0.8rem 1.5rem;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-family:var(--mono);font-size:0.6rem;color:var(--muted);flex-wrap:wrap;gap:0.5rem}
+#lastPoll{color:var(--accent)}
+.refresh-btn{background:none;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:0.6rem;padding:0.25rem 0.6rem;border-radius:3px;cursor:pointer;transition:all 0.15s}
+.refresh-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ── Scan line ── */
+.scan-line{position:fixed;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:scan 2s linear infinite;pointer-events:none;z-index:200;opacity:0;transition:opacity 0.2s}
+.scan-line.active{opacity:1}
+@keyframes scan{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+
+/* ── Tooltip ── */
+.chart-tooltip{position:fixed;pointer-events:none;z-index:1000;background:rgba(8,12,18,0.96);border:1px solid var(--border);border-radius:6px;padding:0.4rem 0.65rem;font-family:var(--mono);font-size:0.68rem;color:var(--text);white-space:nowrap;display:none;box-shadow:0 4px 20px rgba(0,0,0,0.6)}
+.tt-time{color:var(--muted);font-size:0.58rem;margin-bottom:0.15rem}
+.tt-val{font-size:0.85rem}
+.tt-val span{color:var(--muted);font-size:0.65rem}
+
+/* ── Offline overlay ── */
+.offline-msg{font-family:var(--mono);font-size:0.65rem;color:var(--muted);text-align:center;padding:1rem;opacity:0.6}
+
+/* No agents yet */
+.empty-state{text-align:center;padding:4rem 2rem;font-family:var(--mono);color:var(--muted)}
+.empty-state .big{font-size:2rem;color:var(--border);margin-bottom:1rem}
+.empty-state code{background:var(--panel);padding:0.2rem 0.5rem;border-radius:3px;color:var(--accent3)}
+</style>
+</head>
+<body>
+<div class="scan-line" id="scanLine"></div>
+<div class="chart-tooltip" id="chartTooltip"><div class="tt-time" id="ttTime"></div><div class="tt-val" id="ttVal"></div></div>
+
+<div class="app">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="hub-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#00e5ff" stroke-width="1.5">
+          <circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+          <path d="M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>
+        </svg>
+      </div>
+      <div>
+        <div class="hub-title">UPS Hub</div>
+        <div class="hub-sub" id="hubSub">connecting…</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="time-tabs">
+        <button class="time-tab active" onclick="setWindow(15,'15M')">15M</button>
+        <button class="time-tab" onclick="setWindow(60,'1H')">1H</button>
+        <button class="time-tab" onclick="setWindow(360,'6H')">6H</button>
+        <button class="time-tab" onclick="setWindow(1440,'24H')">24H</button>
+        <button class="time-tab" onclick="setWindow(10080,'7D')">7D</button>
+        <button class="time-tab" onclick="setWindow(43200,'30D')">30D</button>
+      </div>
+      <div id="globalTime">–</div>
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div class="main">
+
+    <!-- Overview cards (all agents) -->
+    <div class="overview-strip" id="overviewStrip">
+      <div class="empty-state">
+        <div class="big">◎</div>
+        Waiting for agents…<br><br>
+        Start agents with <code>python3 agent.py</code><br>
+        pointing at <code id="hubUrlHint"></code>
+      </div>
+    </div>
+
+    <!-- Detail view (shown when a card is clicked) -->
+    <div class="detail-section" id="detailSection">
+      <div class="detail-header">
+        <div class="detail-title" id="detailTitle">–</div>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <button class="raw-toggle" id="rawToggleBtn" onclick="toggleRaw()">▶ RAW NUT DATA</button>
+          <button class="detail-close" onclick="closeDetail()">✕ CLOSE</button>
+        </div>
+      </div>
+
+      <div class="raw-table" id="rawTable"></div>
+
+      <div class="charts-grid" id="detailCharts"></div>
+
+      <div class="stats-row" id="detailStats"></div>
+
+      <div class="events-panel" style="margin-top:1rem;position:relative">
+        <div style="font-family:var(--mono);font-size:0.6rem;color:var(--muted);letter-spacing:0.15em;text-transform:uppercase">Event Log</div>
+        <div class="events-list" id="detailEvents"></div>
+      </div>
+    </div>
+
+    <!-- Global event log (all agents) -->
+    <div class="events-panel" style="position:relative">
+      <div style="font-family:var(--mono);font-size:0.6rem;color:var(--muted);letter-spacing:0.15em;text-transform:uppercase">Global Events</div>
+      <div class="events-list" id="globalEvents">
+        <div class="event-row"><span class="event-time">–</span><span class="event-agent">–</span><div class="event-dot blue"></div><span class="event-msg">Waiting…</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    <span>UPS HUB · LAST POLL: <span id="lastPoll">–</span></span>
+    <span id="agentCount">0 agents</span>
+    <button class="refresh-btn" onclick="poll()">↻ REFRESH</button>
+  </footer>
+</div>
+
+<script>
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+const HUB_BASE      = '';           // empty = same origin; or 'http://192.168.1.100:8000'
+const POLL_INTERVAL = 10000;
+// ─────────────────────────────────────────────────────────────────────────────
+
+document.getElementById('hubUrlHint').textContent = `${location.origin}/api/report`;
+
+// ── Per-agent history (Float32Array ring buffers) ─────────────────────────────
+// Fields: ts_hi, ts_lo, charge, load, input_v, runtime_min, batt_v  (7 floats)
+const FIELDS   = 7;
+const BUF_DAYS = 30;
+const BUF_SIZE = Math.floor(86400 * BUF_DAYS / 10); // 259200
+
+const agentBufs   = {};  // agent_id → { buf, head, count }
+const agentMeta   = {};  // agent_id → { label, location, ups_model, online, last_status }
+const agentEvents = {};  // agent_id → [{time,cls,msg}]
+const globalEvts  = [];
+
+let windowMinutes = 15;
+let selectedAgent = null;
+let rawVisible    = false;
+const chartHover  = {};
+
+function ensureBuf(id) {
+  if (!agentBufs[id]) agentBufs[id] = { buf: new Float32Array(BUF_SIZE * FIELDS), head: 0, count: 0 };
+}
+
+function bufPush(id, ts, charge, load, input_v, runtime_s, batt_v) {
+  const b = agentBufs[id];
+  const idx  = (b.head + b.count) % BUF_SIZE;
+  const base = idx * FIELDS;
+  b.buf[base+0] = Math.floor(ts / 65536);
+  b.buf[base+1] = ts % 65536;
+  b.buf[base+2] = charge   || 0;
+  b.buf[base+3] = load     || 0;
+  b.buf[base+4] = input_v  || 0;
+  b.buf[base+5] = Math.floor((runtime_s || 0) / 60);
+  b.buf[base+6] = batt_v   || 0;
+  if (b.count < BUF_SIZE) b.count++;
+  else b.head = (b.head + 1) % BUF_SIZE;
+}
+
+function bufGet(id, i) {
+  const b    = agentBufs[id];
+  const idx  = (b.head + i) % BUF_SIZE;
+  const base = idx * FIELDS;
+  return {
+    ts:      b.buf[base]*65536 + b.buf[base+1],
+    charge:  b.buf[base+2],
+    load:    b.buf[base+3],
+    voltage: b.buf[base+4],
+    runtime: b.buf[base+5],
+    battvolt:b.buf[base+6],
+  };
+}
+
+function getWindowPts(id) {
+  const b      = agentBufs[id];
+  if (!b || b.count < 2) return [];
+  const cutoff = Date.now() - windowMinutes * 60000;
+  const pts    = [];
+  for (let i = b.count - 1; i >= 0; i--) {
+    const p = bufGet(id, i);
+    if (p.ts < cutoff) break;
+    pts.unshift(p);
+  }
+  if (pts.length > 2000) {
+    const step = Math.ceil(pts.length / 2000);
+    return pts.filter((_,i) => i % step === 0 || i === pts.length-1);
+  }
+  return pts;
+}
+
+// ── Events (persistent — loaded from hub DB on boot) ─────────────────────────
+// globalEvts and agentEvents are populated from /api/events on load,
+// then new in-session transitions are appended and also stored by the hub.
+let eventsBootstrapped = false;
+let latestEventTs = 0;  // track newest event ts for incremental polling
+
+async function fetchEvents(since = 0) {
+  try {
+    const res  = await fetch(`${HUB_BASE}/api/events?limit=500&since=${since}`, { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return;
+    const rows = await res.json();   // newest first
+    if (!rows.length) return;
+
+    rows.forEach(e => {
+      const ts    = e.ts || 0;
+      const t     = new Date(ts).toLocaleTimeString();
+      const label = e.label || e.agent_id;
+      const entry = { time: t, ts, agent: label, cls: e.cls || 'blue', msg: e.msg || e.status_to || '' };
+
+      // Global list (avoid duplicates by ts+agent_id)
+      if (!globalEvts.find(x => x.ts === ts && x.agent === label)) {
+        globalEvts.push(entry);
+        if (ts > latestEventTs) latestEventTs = ts;
+      }
+
+      // Per-agent list
+      const id = e.agent_id;
+      if (!agentEvents[id]) agentEvents[id] = [];
+      if (!agentEvents[id].find(x => x.ts === ts)) {
+        agentEvents[id].push({ time: t, ts, cls: e.cls || 'blue', msg: e.msg || '' });
+      }
+    });
+
+    // Sort newest first
+    globalEvts.sort((a,b) => b.ts - a.ts);
+    Object.values(agentEvents).forEach(arr => arr.sort((a,b) => b.ts - a.ts));
+
+    renderGlobalEvents();
+    if (selectedAgent) renderDetailEvents(selectedAgent);
+  } catch(e) {
+    console.log('[events]', e.message);
+  }
+}
+
+async function fetchAgentEvents(id, since = 0) {
+  try {
+    const res  = await fetch(`${HUB_BASE}/api/agents/${id}/events?limit=200&since=${since}`, { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return;
+    const rows = await res.json();
+    if (!rows.length) return;
+
+    if (!agentEvents[id]) agentEvents[id] = [];
+    rows.forEach(e => {
+      const ts = e.ts || 0;
+      const t  = new Date(ts).toLocaleTimeString();
+      if (!agentEvents[id].find(x => x.ts === ts)) {
+        agentEvents[id].push({ time: t, ts, cls: e.cls || 'blue', msg: e.msg || '' });
+      }
+    });
+    agentEvents[id].sort((a,b) => b.ts - a.ts);
+    if (selectedAgent === id) renderDetailEvents(id);
+  } catch(e) {}
+}
+
+function renderGlobalEvents() {
+  const el = document.getElementById('globalEvents');
+  if (!globalEvts.length) {
+    el.innerHTML = '<div class="event-row"><span class="event-time">–</span><span class="event-agent">–</span><div class="event-dot blue"></div><span class="event-msg">No events yet</span></div>';
+    return;
+  }
+  el.innerHTML = globalEvts.slice(0,100).map(e =>
+    `<div class="event-row">
+       <span class="event-time">${e.time}</span>
+       <span class="event-agent">${e.agent}</span>
+       <div class="event-dot ${e.cls}"></div>
+       <span class="event-msg">${e.msg}</span>
+     </div>`
+  ).join('');
+}
+
+function renderDetailEvents(id) {
+  const el  = document.getElementById('detailEvents');
+  const evs = agentEvents[id] || [];
+  if (!evs.length) {
+    el.innerHTML = '<div class="event-row"><span class="event-time">–</span><div class="event-dot blue"></div><span class="event-msg">No events yet</span></div>';
+    return;
+  }
+  el.innerHTML = evs.slice(0,100).map(e =>
+    `<div class="event-row">
+       <span class="event-time">${e.time}</span>
+       <div class="event-dot ${e.cls}"></div>
+       <span class="event-msg">${e.msg}</span>
+     </div>`
+  ).join('');
+}
+
+// ── Polling ───────────────────────────────────────────────────────────────────
+async function poll() {
+  document.getElementById('scanLine').classList.add('active');
+  try {
+    const res = await fetch(`${HUB_BASE}/api/summary`, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error(res.status);
+    const agents = await res.json();
+
+    agents.forEach(a => {
+      ensureBuf(a.agent_id);
+      agentMeta[a.agent_id] = {
+        label:     a.label,
+        location:  a.location,
+        ups_model: a.ups_model,
+        online:    a.online,
+        last_status: a.last_status,
+        last_seen:   a.last_seen,
+      };
+      if (a.latest) {
+        const s = a.latest;
+        bufPush(a.agent_id, s.ts, s.charge, s.load, s.input_v, s.runtime_s, s.batt_v);
+        // stash raw for detail view
+        agentMeta[a.agent_id]._raw = s.raw ? (typeof s.raw === 'string' ? JSON.parse(s.raw) : s.raw) : null;
+        agentMeta[a.agent_id]._latest = s;
+      }
+    });
+
+    renderOverview(agents);
+    if (selectedAgent) renderDetail(selectedAgent);
+
+    // Fetch event history once on first successful poll, then only new events
+    if (!eventsBootstrapped) {
+      eventsBootstrapped = true;
+      fetchEvents(0);   // full history (up to 500 events)
+    } else {
+      fetchEvents(latestEventTs);   // only events since last known
+    }
+
+    const n = agents.length;
+    document.getElementById('hubSub').textContent = `${n} agent${n!==1?'s':''} · ${location.hostname}`;
+    document.getElementById('agentCount').textContent = `${n} agent${n!==1?'s':''}`;
+    document.getElementById('lastPoll').textContent = new Date().toLocaleTimeString();
+    document.getElementById('globalTime').textContent = new Date().toLocaleTimeString();
+
+  } catch(e) {
+    document.getElementById('hubSub').textContent = `hub unreachable`;
+    console.error('[poll]', e);
+  }
+  setTimeout(() => document.getElementById('scanLine').classList.remove('active'), 500);
+}
+
+// ── Overview cards ────────────────────────────────────────────────────────────
+function renderOverview(agents) {
+  if (!agents.length) return;
+
+  const strip = document.getElementById('overviewStrip');
+  strip.innerHTML = '';
+
+  agents.forEach(a => {
+    const meta   = agentMeta[a.agent_id] || {};
+    const latest = meta._latest || {};
+    const pts    = getWindowPts(a.agent_id);
+    const online = meta.online;
+    const status = (meta.last_status||'').toUpperCase();
+
+    let pillCls = 'offline', pillTxt = 'OFFLINE';
+    if (online) {
+      if (status.includes('OL') && !status.includes('OB')) { pillCls='online'; pillTxt='ON LINE'; }
+      else if (status.includes('OB'))                      { pillCls='onbatt'; pillTxt='ON BATT'; }
+      else if (status.includes('LB'))                      { pillCls='danger'; pillTxt='LOW BATT'; }
+      else                                                  { pillCls='online'; pillTxt=status||'OK'; }
+    }
+
+    const charge  = latest.charge   != null ? latest.charge.toFixed(0)  : '–';
+    const load    = latest.load     != null ? latest.load.toFixed(0)     : '–';
+    const inputV  = latest.input_v  != null ? latest.input_v.toFixed(1)  : '–';
+    const runtime = latest.runtime_s!= null ? Math.floor(latest.runtime_s/60) : '–';
+
+    const chargeCls = latest.charge < 20 ? 'red' : latest.charge < 40 ? 'yellow' : 'green';
+
+    const card = document.createElement('div');
+    card.className = `ups-card${!online?' offline':''}${selectedAgent===a.agent_id?' selected':''}`;
+    card.dataset.id = a.agent_id;
+    card.innerHTML = `
+      <div class="card-header">
+        <div>
+          <div class="card-name">${a.label || a.agent_id}</div>
+          <div class="card-loc">${a.location||''}</div>
+        </div>
+        <div class="status-pill ${pillCls}"><div class="pill-dot"></div>${pillTxt}</div>
+      </div>
+      <div class="card-metrics">
+        <div class="metric"><div class="metric-val ${chargeCls}">${charge}</div><div class="metric-unit">%</div><div class="metric-label">Charge</div></div>
+        <div class="metric"><div class="metric-val">${load}</div><div class="metric-unit">%</div><div class="metric-label">Load</div></div>
+        <div class="metric"><div class="metric-val">${inputV}</div><div class="metric-unit">V</div><div class="metric-label">Input</div></div>
+        <div class="metric"><div class="metric-val">${runtime}</div><div class="metric-unit">min</div><div class="metric-label">Runtime</div></div>
+      </div>
+      <div class="card-spark"><canvas class="spark-canvas" id="spark-${a.agent_id}"></canvas></div>
+    `;
+    card.addEventListener('click', () => selectAgent(a.agent_id));
+    strip.appendChild(card);
+
+    // Draw sparkline (charge over window)
+    requestAnimationFrame(() => drawSparkline(a.agent_id, pts));
+  });
+}
+
+function drawSparkline(id, pts) {
+  const canvas = document.getElementById(`spark-${id}`);
+  if (!canvas || pts.length < 2) return;
+  const wrap = canvas.parentElement;
+  const W = wrap.clientWidth, H = 36;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0,0,W,H);
+
+  const vals  = pts.map(p => p.charge);
+  const min   = 0, max = 100, range = 100;
+  const xOf   = i => (i / (pts.length-1)) * W;
+  const yOf   = v => H - (v/range)*H;
+
+  const grad = ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0, '#39ff1430');
+  grad.addColorStop(1, '#39ff1400');
+
+  ctx.beginPath();
+  pts.forEach((p,i) => {
+    const x=xOf(i), y=yOf(p.charge);
+    if (i===0) { ctx.moveTo(x,y); return; }
+    const px=xOf(i-1), py=yOf(pts[i-1].charge);
+    ctx.bezierCurveTo((px+x)/2,py,(px+x)/2,y,x,y);
+  });
+  ctx.lineTo(W,H); ctx.lineTo(0,H); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+
+  ctx.beginPath();
+  pts.forEach((p,i) => {
+    const x=xOf(i), y=yOf(p.charge);
+    if (i===0) { ctx.moveTo(x,y); return; }
+    const px=xOf(i-1), py=yOf(pts[i-1].charge);
+    ctx.bezierCurveTo((px+x)/2,py,(px+x)/2,y,x,y);
+  });
+  ctx.strokeStyle = '#39ff14'; ctx.lineWidth = 1.2;
+  ctx.shadowColor = '#39ff14'; ctx.shadowBlur = 3;
+  ctx.stroke(); ctx.shadowBlur=0;
+}
+
+// ── Detail view ───────────────────────────────────────────────────────────────
+const DETAIL_CHART_DEFS = [
+  { id:'charge',  field:'charge',  color:'#39ff14', unit:'%',  yMin:0, yMax:100, dec:0, label:'Battery Charge' },
+  { id:'load',    field:'load',    color:'#ff6b35', unit:'%',  yMin:0, yMax:100, dec:0, label:'UPS Load' },
+  { id:'voltage', field:'voltage', color:'#00e5ff', unit:'V',  yMin:null, yMax:null, dec:1, label:'Input Voltage' },
+  { id:'runtime', field:'runtime', color:'#ffcc00', unit:'min',yMin:0, yMax:null, dec:0, label:'Runtime Remaining' },
+  { id:'battvolt',field:'battvolt',color:'#c084fc', unit:'V',  yMin:null, yMax:null, dec:2, label:'Battery Voltage' },
+];
+
+function selectAgent(id) {
+  selectedAgent = id;
+  rawVisible    = false;
+  document.getElementById('rawTable').classList.remove('visible');
+  document.getElementById('rawToggleBtn').textContent = '▶ RAW NUT DATA';
+
+  document.querySelectorAll('.ups-card').forEach(c => c.classList.toggle('selected', c.dataset.id === id));
+  document.getElementById('detailSection').classList.add('visible');
+
+  renderDetail(id);
+  fetchAgentHistory(id);
+  fetchAgentStats(id);
+  fetchAgentEvents(id);   // load full persistent event history for this agent
+  document.getElementById('detailSection').scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+function closeDetail() {
+  selectedAgent = null;
+  document.getElementById('detailSection').classList.remove('visible');
+  document.querySelectorAll('.ups-card').forEach(c => c.classList.remove('selected'));
+}
+
+function renderDetail(id) {
+  const meta   = agentMeta[id] || {};
+  const latest = meta._latest  || {};
+
+  document.getElementById('detailTitle').textContent =
+    `${meta.label || id}  ·  ${meta.location || ''}  ·  ${meta.ups_model || ''}`.replace(/·\s*·/g,'·').trim().replace(/·\s*$/,'');
+
+  // Build chart panels
+  const grid = document.getElementById('detailCharts');
+  if (!grid.children.length || grid.dataset.agent !== id) {
+    grid.dataset.agent = id;
+    grid.innerHTML = DETAIL_CHART_DEFS.map(def => `
+      <div class="chart-panel">
+        <div class="chart-header">
+          <div class="chart-title">${def.label}</div>
+          <div class="chart-meta">
+            <span class="chart-current" id="dcv-${id}-${def.id}">–</span>
+            <span class="chart-unit">${def.unit}</span>
+            <span class="chart-minmax" id="dmm-${id}-${def.id}"></span>
+          </div>
+        </div>
+        <div class="chart-canvas-wrap"><canvas id="dch-${id}-${def.id}" class="chart-canvas"></canvas></div>
+        <div class="chart-axis"><span id="dca-${id}-${def.id}">–</span><span>now</span></div>
+      </div>
+    `).join('');
+    DETAIL_CHART_DEFS.forEach(def => attachDetailHover(id, def));
+  }
+
+  renderDetailCharts(id);
+
+  // Raw table
+  if (meta._raw) {
+    document.getElementById('rawTable').innerHTML =
+      Object.entries(meta._raw).sort((a,b)=>a[0].localeCompare(b[0])).map(([k,v])=>
+        `<div class="raw-row"><span class="raw-key">${k}</span><span class="raw-val">${v}</span></div>`).join('');
+  }
+
+  renderDetailEvents(id);
+}
+
+function renderDetailCharts(id) {
+  const pts = getWindowPts(id);
+  if (pts.length < 2) return;
+  DETAIL_CHART_DEFS.forEach(def => drawDetailChart(id, def, pts));
+}
+
+async function fetchAgentHistory(id) {
+  try {
+    const hours = Math.min(windowMinutes / 60 + 1, 720);
+    const res   = await fetch(`${HUB_BASE}/api/agents/${id}/history?hours=${Math.ceil(hours)}`);
+    if (!res.ok) return;
+    const data  = await res.json();
+    const earliest = agentBufs[id]?.count > 0 ? bufGet(id, 0).ts : Infinity;
+    (data.samples || []).forEach(s => {
+      if (s.ts < earliest) bufPush(id, s.ts, s.charge, s.load, s.input_v, s.runtime_s, s.batt_v);
+    });
+    renderDetailCharts(id);
+  } catch(e) { console.log('[history]', e.message); }
+}
+
+async function fetchAgentStats(id) {
+  try {
+    const res  = await fetch(`${HUB_BASE}/api/agents/${id}/stats`);
+    if (!res.ok) return;
+    const s    = await res.json();
+    const grid = document.getElementById('detailStats');
+    const oldest = s.oldest ? new Date(s.oldest).toLocaleDateString() : '–';
+    const newest = s.newest ? new Date(s.newest).toLocaleDateString() : '–';
+    grid.innerHTML = [
+      { k:'Samples',       v:`${(s.total||0).toLocaleString()}` },
+      { k:'Data from',     v:oldest },
+      { k:'Charge range',  v:`${s.min_charge}–${s.max_charge}%`, sub:`avg ${s.avg_charge}%` },
+      { k:'Input V range', v:`${s.min_v}–${s.max_v}V` },
+      { k:'Load range',    v:`${s.min_load}–${s.max_load}%`, sub:`avg ${s.avg_load}%` },
+    ].map(r => `
+      <div class="stat-cell">
+        <div class="stat-cell-key">${r.k}</div>
+        <div class="stat-cell-val">${r.v}${r.sub?` <span>${r.sub}</span>`:''}</div>
+      </div>`).join('');
+  } catch(e) {}
+}
+
+// ── Chart drawing ─────────────────────────────────────────────────────────────
+function drawDetailChart(agentId, def, pts, hoverIdx) {
+  const cid    = `dch-${agentId}-${def.id}`;
+  const canvas = document.getElementById(cid);
+  if (!canvas) return;
+
+  const fieldMap = { charge:'charge', load:'load', voltage:'voltage', runtime:'runtime', battvolt:'battvolt' };
+  const field    = fieldMap[def.id];
+  const vals     = pts.map(p => p[field]);
+  const last     = vals[vals.length-1];
+  const minR     = Math.min(...vals), maxR = Math.max(...vals);
+
+  if (hoverIdx === undefined) {
+    document.getElementById(`dcv-${agentId}-${def.id}`).textContent = last.toFixed(def.dec);
+    const mm = document.getElementById(`dmm-${agentId}-${def.id}`);
+    if (mm) mm.textContent = `↓${minR.toFixed(def.dec)} ↑${maxR.toFixed(def.dec)}`;
+    document.getElementById(`dca-${agentId}-${def.id}`).textContent = fmtTime(pts[0].ts);
+  }
+
+  const wrap = canvas.parentElement;
+  const W = wrap.clientWidth||300, H = 80;
+  const dpr = window.devicePixelRatio||1;
+  canvas.width=W*dpr; canvas.height=H*dpr;
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,W,H);
+
+  const pad2  = (maxR-minR)*0.1||1;
+  const minV  = def.yMin!==null ? def.yMin : minR-pad2;
+  const maxV  = def.yMax!==null ? def.yMax : maxR+pad2;
+  const range = maxV-minV||1;
+  const pad   = {t:6,b:4,l:30,r:4};
+  const gW=W-pad.l-pad.r, gH=H-pad.t-pad.b;
+  const xOf = i => pad.l+(i/(pts.length-1))*gW;
+  const yOf = v => pad.t+gH-((v-minV)/range)*gH;
+
+  // Store for hover
+  chartHover[cid] = { pts, def, agentId, field, pad, gW, gH, W, H, minV, maxV, range };
+
+  // Grid
+  ctx.font=`8px 'Share Tech Mono',monospace`; ctx.textAlign='right';
+  [0,0.5,1].forEach(f => {
+    const y=pad.t+gH*(1-f), v=minV+range*f;
+    ctx.strokeStyle='rgba(26,37,64,0.9)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(pad.l+gW,y); ctx.stroke();
+    ctx.fillStyle='#4a6080';
+    ctx.fillText(v.toFixed(def.dec),pad.l-3,y+3);
+  });
+
+  // Fill
+  const grad=ctx.createLinearGradient(0,pad.t,0,pad.t+gH);
+  grad.addColorStop(0,def.color+'44'); grad.addColorStop(1,def.color+'00');
+  ctx.beginPath();
+  pts.forEach((p,i)=>{
+    const x=xOf(i),y=yOf(p[field]);
+    if(i===0){ctx.moveTo(x,y);return;}
+    const px=xOf(i-1),py=yOf(pts[i-1][field]);
+    ctx.bezierCurveTo((px+x)/2,py,(px+x)/2,y,x,y);
+  });
+  ctx.lineTo(xOf(pts.length-1),pad.t+gH); ctx.lineTo(pad.l,pad.t+gH);
+  ctx.closePath(); ctx.fillStyle=grad; ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  pts.forEach((p,i)=>{
+    const x=xOf(i),y=yOf(p[field]);
+    if(i===0){ctx.moveTo(x,y);return;}
+    const px=xOf(i-1),py=yOf(pts[i-1][field]);
+    ctx.bezierCurveTo((px+x)/2,py,(px+x)/2,y,x,y);
+  });
+  ctx.strokeStyle=def.color; ctx.lineWidth=1.5;
+  ctx.shadowColor=def.color; ctx.shadowBlur=4;
+  ctx.stroke(); ctx.shadowBlur=0;
+
+  // Dot or crosshair
+  if (hoverIdx!==undefined && hoverIdx>=0 && hoverIdx<pts.length) {
+    const hx=xOf(hoverIdx), hy=yOf(pts[hoverIdx][field]);
+    ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(hx,pad.t); ctx.lineTo(hx,pad.t+gH); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle='rgba(255,255,255,0.07)';
+    ctx.beginPath(); ctx.moveTo(pad.l,hy); ctx.lineTo(pad.l+gW,hy); ctx.stroke();
+    ctx.beginPath(); ctx.arc(hx,hy,4,0,Math.PI*2);
+    ctx.fillStyle='#fff'; ctx.shadowColor=def.color; ctx.shadowBlur=12; ctx.fill(); ctx.shadowBlur=0;
+    ctx.beginPath(); ctx.arc(hx,hy,2.5,0,Math.PI*2); ctx.fillStyle=def.color; ctx.fill();
+  } else {
+    const lx=xOf(pts.length-1), ly=yOf(last);
+    ctx.beginPath(); ctx.arc(lx,ly,3,0,Math.PI*2);
+    ctx.fillStyle=def.color; ctx.shadowColor=def.color; ctx.shadowBlur=10; ctx.fill(); ctx.shadowBlur=0;
+  }
+}
+
+function attachDetailHover(agentId, def) {
+  const cid    = `dch-${agentId}-${def.id}`;
+  const getCanvas = () => document.getElementById(cid);
+  const tooltip = document.getElementById('chartTooltip');
+
+  const onMove = e => {
+    const canvas = getCanvas(); if (!canvas) return;
+    const state  = chartHover[cid]; if (!state || state.pts.length < 2) return;
+    const rect   = canvas.getBoundingClientRect();
+    const mx     = e.clientX - rect.left;
+    const frac   = Math.max(0, Math.min(1, (mx - state.pad.l) / state.gW));
+    const idx    = Math.round(frac * (state.pts.length-1));
+    drawDetailChart(agentId, def, state.pts, idx);
+    const val = state.pts[idx][state.field];
+    document.getElementById('ttTime').textContent = fmtTimeFull(state.pts[idx].ts);
+    document.getElementById('ttVal').innerHTML = `${val.toFixed(def.dec)}<span> ${def.unit}</span>`;
+    document.getElementById('ttVal').style.color = def.color;
+    let tx=e.clientX+14, ty=e.clientY-26;
+    if (tx+130>window.innerWidth)  tx=e.clientX-144;
+    if (ty<4)                       ty=4;
+    tooltip.style.left=tx+'px'; tooltip.style.top=ty+'px'; tooltip.style.display='block';
+  };
+  const onLeave = () => {
+    tooltip.style.display='none';
+    const state=chartHover[cid];
+    if (state) drawDetailChart(agentId, def, state.pts);
+  };
+
+  // Attach with event delegation since canvas is re-created
+  document.getElementById('detailCharts').addEventListener('mousemove', e => {
+    if (e.target.id===cid) onMove(e);
+  });
+  document.getElementById('detailCharts').addEventListener('mouseleave', onLeave);
+  document.getElementById('detailCharts').addEventListener('touchmove', e => {
+    if (e.target.id===cid) { e.preventDefault(); onMove(e.touches[0]); }
+  }, {passive:false});
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmtTime(ts) {
+  const d=new Date(ts);
+  if (windowMinutes>=10080) return `${d.getMonth()+1}/${d.getDate()}`;
+  return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+}
+function fmtTimeFull(ts) {
+  const d=new Date(ts);
+  if (windowMinutes>=10080)
+    return `${d.toLocaleDateString()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+  return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+}
+
+function setWindow(mins, label) {
+  windowMinutes = mins;
+  document.querySelectorAll('.time-tab').forEach(b => b.classList.toggle('active', b.textContent===label));
+  if (selectedAgent) {
+    fetchAgentHistory(selectedAgent);
+    renderDetailCharts(selectedAgent);
+  }
+  // Re-render overview sparklines
+  Object.keys(agentMeta).forEach(id => {
+    const pts = getWindowPts(id);
+    requestAnimationFrame(() => drawSparkline(id, pts));
+  });
+}
+
+function toggleRaw() {
+  rawVisible = !rawVisible;
+  document.getElementById('rawTable').classList.toggle('visible', rawVisible);
+  document.getElementById('rawToggleBtn').textContent = (rawVisible?'▼':'▶') + ' RAW NUT DATA';
+}
+
+window.addEventListener('resize', () => {
+  if (selectedAgent) renderDetailCharts(selectedAgent);
+  Object.keys(agentMeta).forEach(id => drawSparkline(id, getWindowPts(id)));
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+poll();
+setInterval(poll, POLL_INTERVAL);
+setInterval(() => { document.getElementById('globalTime').textContent = new Date().toLocaleTimeString(); }, 1000);
+</script>
+</body>
+</html>
