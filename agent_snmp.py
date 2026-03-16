@@ -144,7 +144,7 @@ def build_payload(device, raw):
     input_v   = raw.get('input_volt')
     output_v  = raw.get('output_volt')
     runtime_s = int(raw.get('runtime', 0)) // 100       # timeticks → seconds
-    batt_v    = (raw.get('batt_volt')   or 0) / 10      # 0.1V → V
+    batt_v    = (raw.get('batt_volt')   or 0)
     input_hz  = (raw.get('input_freq')  or 0) / 10      # 0.1Hz → Hz
     output_a  = (raw.get('output_amps') or 0) / 10      # 0.1A → A
     output_w  = raw.get('output_watt')
