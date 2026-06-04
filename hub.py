@@ -13,7 +13,7 @@ Run:
   uvicorn hub:app --host 0.0.0.0 --port 8000 --workers 1
 """
 
-import sqlite3, time, os, threading
+import json, sqlite3, time, os, threading
 from datetime  import datetime, timezone
 from typing    import Optional
 from fastapi   import FastAPI, HTTPException, Query
@@ -25,6 +25,7 @@ from pydantic  import BaseModel
 DB_PATH      = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ups_hub.db')
 MAX_DAYS     = 30
 STALE_SECS   = 60   # mark agent offline after this many seconds with no data
+STORE_RAW    = False  # set True to persist full NUT/SNMP JSON per sample (~3× DB size)
 
 app = FastAPI(title='UPS Hub', version='1.0')
 app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])
@@ -113,8 +114,10 @@ def pruner():
         try:
             with get_db() as db:
                 db.execute('DELETE FROM samples WHERE ts < ?', (cutoff,))
+                db.execute('DELETE FROM events  WHERE ts < ?', (cutoff,))
                 db.commit()
-            print('[pruner] Old samples removed')
+                db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            print('[pruner] Old data pruned and WAL checkpointed')
         except Exception as e:
             print(f'[pruner] {e}')
 
@@ -143,10 +146,8 @@ class TelemetryPayload(BaseModel):
 def report(payload: TelemetryPayload):
     """Agents POST here every 10 seconds."""
     ts = payload.ts or int(time.time() * 1000)
-    import json
 
     with get_db() as db:
-        # Upsert agent record
         db.execute('''INSERT INTO agents(agent_id, label, location, ups_model, last_seen, last_status)
                       VALUES (?,?,?,?,?,?)
                       ON CONFLICT(agent_id) DO UPDATE SET
@@ -158,7 +159,7 @@ def report(payload: TelemetryPayload):
                    (payload.agent_id, payload.label, payload.location,
                     payload.ups_model, ts, payload.status))
 
-        # Insert sample
+        raw_json = json.dumps(payload.raw) if (STORE_RAW and payload.raw) else None
         db.execute('''INSERT INTO samples
                       (agent_id,ts,charge,load,input_v,output_v,batt_v,runtime_s,input_freq,output_a,status,raw)
                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
@@ -166,8 +167,7 @@ def report(payload: TelemetryPayload):
                     payload.charge, payload.load,
                     payload.input_v, payload.output_v, payload.batt_v,
                     payload.runtime_s, payload.input_freq, payload.output_a,
-                    payload.status,
-                    json.dumps(payload.raw) if payload.raw else None))
+                    payload.status, raw_json))
         record_event(db, payload.agent_id, payload.label, payload.status or '', ts)
         db.commit()
 
@@ -179,8 +179,10 @@ def list_agents():
     """Returns all known agents with their current status."""
     now = int(time.time() * 1000)
     db  = get_db()
-    rows = db.execute('SELECT * FROM agents ORDER BY label').fetchall()
-    db.close()
+    try:
+        rows = db.execute('SELECT * FROM agents ORDER BY label').fetchall()
+    finally:
+        db.close()
     result = []
     for r in rows:
         d = dict(r)
@@ -197,28 +199,34 @@ def agent_history(
     """Returns thinned historical samples for one agent."""
     cutoff = int(time.time() * 1000) - hours * 3600 * 1000
     db     = get_db()
+    try:
+        total = db.execute(
+            'SELECT COUNT(*) FROM samples WHERE agent_id=? AND ts>=?',
+            (agent_id, cutoff)
+        ).fetchone()[0]
 
-    total = db.execute(
-        'SELECT COUNT(*) FROM samples WHERE agent_id=? AND ts>=?',
-        (agent_id, cutoff)
-    ).fetchone()[0]
+        step = max(1, total // 4000)   # cap at ~4000 points
 
-    step = max(1, total // 4000)   # cap at ~4000 points
+        # Thin in SQL via window function — avoids loading the full result set into Python
+        rows = db.execute(
+            '''SELECT ts,charge,load,input_v,output_v,batt_v,runtime_s,status
+               FROM (
+                   SELECT ts,charge,load,input_v,output_v,batt_v,runtime_s,status,
+                          (ROW_NUMBER() OVER (ORDER BY ts) - 1) AS rn
+                   FROM samples WHERE agent_id=? AND ts>=?
+               )
+               WHERE rn % ? = 0''',
+            (agent_id, cutoff, step)
+        ).fetchall()
+    finally:
+        db.close()
 
-    rows = db.execute(
-        '''SELECT ts,charge,load,input_v,output_v,batt_v,runtime_s,status
-           FROM samples WHERE agent_id=? AND ts>=? ORDER BY ts''',
-        (agent_id, cutoff)
-    ).fetchall()
-    db.close()
-
-    thinned = rows[::step]
     return {
         'agent_id': agent_id,
         'hours':    hours,
         'step_s':   10 * step,
-        'count':    len(thinned),
-        'samples':  [dict(r) for r in thinned],
+        'count':    len(rows),
+        'samples':  [dict(r) for r in rows],
     }
 
 
@@ -226,35 +234,66 @@ def agent_history(
 def agent_stats(agent_id: str):
     """Aggregate min/max/avg for one agent over all stored data."""
     db  = get_db()
-    row = db.execute('''SELECT
-        COUNT(*)            total,
-        MIN(ts)             oldest,
-        MAX(ts)             newest,
-        ROUND(MIN(charge),1) min_charge, ROUND(MAX(charge),1) max_charge, ROUND(AVG(charge),1) avg_charge,
-        ROUND(MIN(input_v),1) min_v,     ROUND(MAX(input_v),1) max_v,
-        ROUND(MIN(load),1)   min_load,   ROUND(MAX(load),1)   max_load,   ROUND(AVG(load),1) avg_load
-        FROM samples WHERE agent_id=?''', (agent_id,)).fetchone()
-    db.close()
+    try:
+        row = db.execute('''SELECT
+            COUNT(*)            total,
+            MIN(ts)             oldest,
+            MAX(ts)             newest,
+            ROUND(MIN(charge),1) min_charge, ROUND(MAX(charge),1) max_charge, ROUND(AVG(charge),1) avg_charge,
+            ROUND(MIN(input_v),1) min_v,     ROUND(MAX(input_v),1) max_v,
+            ROUND(MIN(load),1)   min_load,   ROUND(MAX(load),1)   max_load,   ROUND(AVG(load),1) avg_load
+            FROM samples WHERE agent_id=?''', (agent_id,)).fetchone()
+    finally:
+        db.close()
     return dict(row)
 
 
 @app.get('/api/summary')
 def summary():
     """Latest reading for every agent — used by dashboard overview."""
-    db   = get_db()
-    agents = db.execute('SELECT * FROM agents ORDER BY label').fetchall()
-    now  = int(time.time() * 1000)
+    now = int(time.time() * 1000)
+    db  = get_db()
+    try:
+        rows = db.execute('''
+            SELECT a.*,
+                   s.id       AS s_id,
+                   s.ts       AS s_ts,
+                   s.charge, s.load, s.input_v, s.output_v, s.batt_v,
+                   s.runtime_s, s.input_freq, s.output_a,
+                   s.status   AS s_status,
+                   s.raw
+            FROM agents a
+            LEFT JOIN samples s ON s.id = (
+                SELECT id FROM samples
+                WHERE agent_id = a.agent_id
+                ORDER BY ts DESC LIMIT 1
+            )
+            ORDER BY a.label
+        ''').fetchall()
+    finally:
+        db.close()
+
     result = []
-    for a in agents:
-        latest = db.execute(
-            '''SELECT * FROM samples WHERE agent_id=? ORDER BY ts DESC LIMIT 1''',
-            (a['agent_id'],)
-        ).fetchone()
-        d = dict(a)
-        d['online']  = (now - (a['last_seen'] or 0)) < STALE_SECS * 1000
-        d['latest']  = dict(latest) if latest else None
+    for r in rows:
+        d        = dict(r)
+        latest   = None
+        if d['s_id'] is not None:
+            latest = {
+                'id': d.pop('s_id'), 'agent_id': d['agent_id'],
+                'ts': d.pop('s_ts'), 'charge': d.pop('charge'),
+                'load': d.pop('load'), 'input_v': d.pop('input_v'),
+                'output_v': d.pop('output_v'), 'batt_v': d.pop('batt_v'),
+                'runtime_s': d.pop('runtime_s'), 'input_freq': d.pop('input_freq'),
+                'output_a': d.pop('output_a'), 'status': d.pop('s_status'),
+                'raw': d.pop('raw'),
+            }
+        else:
+            for k in ('s_id','s_ts','charge','load','input_v','output_v','batt_v',
+                      'runtime_s','input_freq','output_a','s_status','raw'):
+                d.pop(k, None)
+        d['online'] = (now - (d.get('last_seen') or 0)) < STALE_SECS * 1000
+        d['latest'] = latest
         result.append(d)
-    db.close()
     return result
 
 
@@ -265,14 +304,16 @@ def global_events(
 ):
     """All events across all agents, newest first."""
     db   = get_db()
-    rows = db.execute(
-        '''SELECT e.*, a.label FROM events e
-           LEFT JOIN agents a ON a.agent_id = e.agent_id
-           WHERE e.ts > ?
-           ORDER BY e.ts DESC LIMIT ?''',
-        (since, limit)
-    ).fetchall()
-    db.close()
+    try:
+        rows = db.execute(
+            '''SELECT e.*, a.label FROM events e
+               LEFT JOIN agents a ON a.agent_id = e.agent_id
+               WHERE e.ts > ?
+               ORDER BY e.ts DESC LIMIT ?''',
+            (since, limit)
+        ).fetchall()
+    finally:
+        db.close()
     return [dict(r) for r in rows]
 
 
@@ -284,13 +325,30 @@ def agent_events(
 ):
     """Events for a single agent, newest first."""
     db   = get_db()
-    rows = db.execute(
-        '''SELECT * FROM events WHERE agent_id=? AND ts > ?
-           ORDER BY ts DESC LIMIT ?''',
-        (agent_id, since, limit)
-    ).fetchall()
-    db.close()
+    try:
+        rows = db.execute(
+            '''SELECT * FROM events WHERE agent_id=? AND ts > ?
+               ORDER BY ts DESC LIMIT ?''',
+            (agent_id, since, limit)
+        ).fetchall()
+    finally:
+        db.close()
     return [dict(r) for r in rows]
+
+
+@app.delete('/api/agents/{agent_id}')
+def delete_agent(agent_id: str):
+    """Remove an agent and all its historical data."""
+    with get_db() as db:
+        agent = db.execute('SELECT agent_id FROM agents WHERE agent_id=?', (agent_id,)).fetchone()
+        if not agent:
+            raise HTTPException(status_code=404, detail='Agent not found')
+        db.execute('DELETE FROM agents  WHERE agent_id=?', (agent_id,))
+        db.execute('DELETE FROM samples WHERE agent_id=?', (agent_id,))
+        db.execute('DELETE FROM events  WHERE agent_id=?', (agent_id,))
+        db.commit()
+    _last_status.pop(agent_id, None)
+    return {'ok': True, 'deleted': agent_id}
 
 
 @app.get('/')
