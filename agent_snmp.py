@@ -17,47 +17,56 @@ Run:
 Add as many entries to DEVICES as you like.
 """
 
-import time, threading, requests
+import json, os, time, threading, requests
+from pathlib import Path
 from pysnmp.hlapi import (
     getCmd, SnmpEngine, CommunityData, UdpTransportTarget,
     ContextData, ObjectType, ObjectIdentity
 )
 
+# ── Load .env ─────────────────────────────────────────────────────────────────
+def _load_env():
+    path = Path(__file__).parent / '.env'
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                k, _, v = line.partition('=')
+                v = v.strip().strip("'\"")
+                os.environ.setdefault(k.strip(), v)
+    except FileNotFoundError:
+        pass
+
+_load_env()
+
 # ── Global config ─────────────────────────────────────────────────────────────
-HUB_URL      = 'http://localhost:8000/api/report'
+HUB_URL      = os.environ.get('HUB_URL', 'http://localhost:8000/api/report')
 POLL_SECONDS = 10
 SNMP_TIMEOUT = 3
 SNMP_RETRIES = 2
 
-# ── Device list — add one dict per UPS ───────────────────────────────────────
+# ── Device list ───────────────────────────────────────────────────────────────
+# Loaded from SNMP_DEVICES env var (JSON array) in .env.
 # Each entry becomes a separate agent on the hub dashboard.
-# Fields:
-#   agent_id  : unique slug (no spaces), shown in hub DB and dashboard
-#   label     : human name shown on dashboard cards
-#   location  : physical location label (optional)
-#   host      : IP or hostname of the NMC card
-#   community : SNMP community string (default 'public')
-#   port      : SNMP port (default 161)
+# Fields: agent_id, label, location, host, community (default 'public'), port (default 161)
 
-DEVICES = [
-    {
-        'agent_id':  'srt5000',
-        'label':     'Smart-UPS SRT 5000',
-        'location':  'Garage',
-        'host':      '10.0.0.122',
-        'community': 'public',
-        'port':      161,
-    },
-    # Add more devices here, e.g.:
-    # {
-    #     'agent_id':  'office-smt1500',
-    #     'label':     'Smart-UPS SMT 1500',
-    #     'location':  'Office Rack',
-    #     'host':      '10.0.0.10',
-    #     'community': 'public',
-    #     'port':      161,
-    # },
-]
+_env_devices = os.environ.get('SNMP_DEVICES')
+if _env_devices:
+    DEVICES = json.loads(_env_devices)
+else:
+    # Fallback — set SNMP_DEVICES in .env instead of editing this list
+    DEVICES = [
+        {
+            'agent_id':  'srt5000',
+            'label':     'Smart-UPS SRT 5000',
+            'location':  'Garage',
+            'host':      '10.0.0.1',
+            'community': 'public',
+            'port':      161,
+        },
+    ]
 
 # ── APC PowerNet MIB OIDs ─────────────────────────────────────────────────────
 OIDS = {

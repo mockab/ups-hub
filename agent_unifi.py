@@ -19,20 +19,37 @@ Systemd unit is at the bottom of this file as a comment.
 """
 
 import subprocess, time, os, json, socket
+from pathlib import Path
 import requests
 
-# ── Agent config (edit these) ─────────────────────────────────────────────────
-HUB_URL      = 'http://localhost:8000/api/report'  # hub IP:port
-AGENT_ID     = 'office-ups'          # unique slug, no spaces
-AGENT_LABEL  = 'Office Unifi UPS'      # human-readable name shown in dashboard
-AGENT_LOC    = 'Office'       # physical location (optional)
-UPS_NAME     = 'office-ups'              # name in /etc/nut/ups.conf
-UPS_HOST     = '10.0.0.10'           # 'localhost' for local NUT, or IP for remote
-UPS_PORT     = 3493                  # NUT default port
+# ── Load .env ─────────────────────────────────────────────────────────────────
+def _load_env():
+    path = Path(__file__).parent / '.env'
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                k, _, v = line.partition('=')
+                v = v.strip().strip("'\"")
+                os.environ.setdefault(k.strip(), v)
+    except FileNotFoundError:
+        pass
+
+_load_env()
+
+# ── Agent config — set these in .env ─────────────────────────────────────────
+HUB_URL      = os.environ.get('HUB_URL',      'http://localhost:8000/api/report')
+AGENT_ID     = os.environ.get('AGENT_ID',     'office-ups')
+AGENT_LABEL  = os.environ.get('AGENT_LABEL',  'Office UPS')
+AGENT_LOC    = os.environ.get('AGENT_LOC',    'Office')
+UPS_NAME     = os.environ.get('UPS_NAME',     'office-ups')
+UPS_HOST     = os.environ.get('UPS_HOST',     'localhost')
+UPS_PORT     = int(os.environ.get('UPS_PORT', '3493'))
 
 POLL_SECONDS = 10
-RETRY_DELAY  = 30   # seconds to wait before retrying after a failed upsc
-# ─────────────────────────────────────────────────────────────────────────────
+RETRY_DELAY  = 30
 
 
 def upsc():
