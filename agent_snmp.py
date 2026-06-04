@@ -67,7 +67,7 @@ OIDS = {
     'serial':      '1.3.6.1.4.1.318.1.1.1.1.2.3.0',  # STRING
     'batt_status': '1.3.6.1.4.1.318.1.1.1.2.1.1.0',  # INTEGER 1=unknown 2=normal 3=low 4=fault
     'batt_charge': '1.3.6.1.4.1.318.1.1.1.2.2.1.0',  # Gauge32 %
-    'batt_volt':   '1.3.6.1.4.1.318.1.1.1.2.2.8.0',  # Gauge32 0.1V
+    'batt_volt':   '1.3.6.1.4.1.318.1.1.1.2.2.8.0',  # Gauge32 V (whole volts on NMC2/NMC3)
     'batt_temp':   '1.3.6.1.4.1.318.1.1.1.2.2.2.0',  # Gauge32 °C
     'runtime':     '1.3.6.1.4.1.318.1.1.1.2.2.3.0',  # TimeTicks 1/100s
     'input_volt':  '1.3.6.1.4.1.318.1.1.1.3.2.1.0',  # Gauge32 V
@@ -108,7 +108,7 @@ def snmp_get(host, community, port, oids_dict):
     Silently drops OIDs that return noSuchObject/noSuchInstance.
     """
     engine    = SnmpEngine()
-    auth      = CommunityData(community, mpModel=0)  # 0 = SNMPv1
+    auth      = CommunityData(community, mpModel=1)  # 1 = SNMPv2c
     transport = UdpTransportTarget(
         (host, port),
         timeout=SNMP_TIMEOUT,
